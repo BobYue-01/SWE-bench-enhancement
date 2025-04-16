@@ -438,6 +438,7 @@ def build_container(
     logger: logging.Logger,
     nocache: bool,
     force_rebuild: bool = False,
+    volumes: dict[str, dict[str, str]] = None,
 ):
     """
     Builds the instance image for the given test spec and creates a container from the image.
@@ -485,6 +486,7 @@ def build_container(
             command="tail -f /dev/null",
             platform=test_spec.platform,
             cap_add=cap_add,
+            volumes=volumes,
         )
         logger.info(f"Container for {test_spec.instance_id} created: {container.id}")
         return container
