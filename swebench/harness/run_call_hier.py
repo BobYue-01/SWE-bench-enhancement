@@ -13,21 +13,19 @@ from swebench.harness.utils import (
 )
 from swebench.harness.test_spec.test_spec import make_test_spec
 import re
+import time
 
 
-def main(dataset_path, split, run_id, vscode_dir):
+def main(dataset_path, split, run_id, vscode_dir, mount_root):
     logger = logging.getLogger("swebench.harness.run_call_hier")
     dataset = load_swebench_dataset(dataset_path, split)
 
     client = docker.from_env()
+    logger.info(f"Docker host: {client.api.base_url}")
 
-    build_env_images(client, dataset, force_rebuild=False, max_workers=1)
+    # build_env_images(client, dataset, force_rebuild=False, max_workers=1)
 
     for instance in dataset:
-        test_spec = make_test_spec(
-            instance, namespace="swebench", instance_image_tag="latest"
-        )
-
         instance_id = instance["instance_id"]
         logger.info(f"Processing instance {instance_id}")
 
@@ -42,11 +40,14 @@ def main(dataset_path, split, run_id, vscode_dir):
         logger.info(f"BM results: {bm_results}")
 
         volumes = {
-            "/mnt/sweb/.vscode-server": {"bind": "/root/.vscode-server", "mode": "rw"},
-            "/mnt/sweb/.vscode": {"bind": "/testbed/.vscode", "mode": "rw"},
-            f"/mnt/sweb/output/{instance_id}": {"bind": "/output", "mode": "rw"},
+            f"{mount_root}/.vscode-server": {"bind": "/root/.vscode-server", "mode": "rw"},
+            f"{mount_root}/.vscode": {"bind": "/testbed/.vscode", "mode": "rw"},
+            f"{mount_root}/output/{instance_id}": {"bind": "/output", "mode": "rw"},
         }
 
+        test_spec = make_test_spec(
+            instance, namespace="swebench"
+        )
         container = build_container(
             test_spec,
             client,
@@ -56,28 +57,29 @@ def main(dataset_path, split, run_id, vscode_dir):
             volumes=volumes,
         )
 
-        container.start()
+        try:
+            container.start()
+            container_hash = ('/' + container.name).encode('utf-8').hex()
 
-        container_hash = container.name.encode('utf-8').hex()
+            # unknown problem when breaking the shell command into a sequence of arguments
+            # therefore, we need to use a joined string to make it work
+            command = [
+                f'"{vscode_dir}"',
+                "--new-window --wait",
+                '--profile "SWE-bench"',
+                f'--folder-uri "vscode-remote://attached-container+{container_hash}/testbed"',
+                *[
+                    f'--file-uri "vscode-remote://attached-container+{container_hash}/testbed/{bm_result}"'
+                    for bm_result in bm_results
+                ],
+            ]
+            command = " ".join(command)
+            logger.info(f"Running command: {command}")
 
-        # unknown problem when breaking the shell command into a sequence of arguments
-        # therefore, we need to use a joined string to make it work
-        command = [
-            f'"{vscode_dir}"',
-            "--new-window --wait",
-            '--profile "SWE-bench"',
-            f'--folder-uri "vscode-remote://attached-container+{container_hash}/testbed"',
-            *[
-                f'--file-uri "vscode-remote://attached-container+{container_hash}/testbed/{bm_result}"'
-                for bm_result in bm_results
-            ],
-        ]
-        command = " ".join(command)
-        logger.info(f"Running command: {command}")
-        subprocess.run(command, shell=True)
-
-        cleanup_container(client, container, logger)
-        remove_image(client, test_spec.instance_image_key, logger)
+            subprocess.run(command, shell=True)
+        finally:
+            cleanup_container(client, container, logger)
+            # remove_image(client, test_spec.instance_image_key, logger)
 
 
 if __name__ == "__main__":
@@ -106,9 +108,15 @@ if __name__ == "__main__":
     parser.add_argument(
         "--vscode_dir",
         type=str,
-        required=True,
-        help="Path to the VS Code directory. "
+        default="code",
+        help="Path to the VS Code executable if using WSL. "
         "E.g. /mnt/c/Users/<username>/AppData/Local/Programs/Microsoft VS Code/bin/code",
+    )
+    parser.add_argument(
+        "--mount_root",
+        type=str,
+        default="/mnt/sweb",
+        help="Mount root for the container.",
     )
 
     args = parser.parse_args()

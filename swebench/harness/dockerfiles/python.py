@@ -30,6 +30,15 @@ RUN conda init --all
 RUN conda config --append channels conda-forge
 
 RUN adduser --disabled-password --gecos 'dog' nonroot
+
+RUN pip config set global.index-url https://mirrors.tuna.tsinghua.edu.cn/pypi/web/simple
+
+RUN \
+conda config --set show_channel_urls yes; \
+conda config --add channels https://mirrors.tuna.tsinghua.edu.cn/anaconda/pkgs/main; \
+conda config --add channels https://mirrors.tuna.tsinghua.edu.cn/anaconda/pkgs/r; \
+conda config --add channels https://mirrors.tuna.tsinghua.edu.cn/anaconda/pkgs/msys2; \
+conda config --set custom_channels.conda-forge https://mirrors.tuna.tsinghua.edu.cn/anaconda/cloud/
 """
 
 _DOCKERFILE_ENV_PY = r"""FROM --platform={platform} {base_image_key}
