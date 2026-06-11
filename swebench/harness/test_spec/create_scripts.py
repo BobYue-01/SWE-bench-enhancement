@@ -1,6 +1,5 @@
+from swebench.harness.constants import MAP_REPO_TO_EXT
 from swebench.harness.test_spec.javascript import (
-    make_repo_script_list_js,
-    make_env_script_list_js,
     make_eval_script_list_js,
 )
 from swebench.harness.test_spec.python import (
@@ -8,7 +7,11 @@ from swebench.harness.test_spec.python import (
     make_env_script_list_py,
     make_eval_script_list_py,
 )
-from swebench.harness.constants import MAP_REPO_TO_EXT
+from swebench.harness.test_spec.utils import (
+    make_env_script_list_common,
+    make_eval_script_list_common,
+    make_repo_script_list_common,
+)
 
 
 def make_repo_script_list(specs, repo, repo_directory, base_commit, env_name) -> list:
@@ -18,9 +21,8 @@ def make_repo_script_list(specs, repo, repo_directory, base_commit, env_name) ->
     """
     ext = MAP_REPO_TO_EXT[repo]
     func = {
-        "js": make_repo_script_list_js,
         "py": make_repo_script_list_py,
-    }[ext]
+    }.get(ext, make_repo_script_list_common)
     return func(specs, repo, repo_directory, base_commit, env_name)
 
 
@@ -31,9 +33,8 @@ def make_env_script_list(instance, specs, env_name) -> list:
     """
     ext = MAP_REPO_TO_EXT[instance["repo"]]
     func = {
-        "js": make_env_script_list_js,
         "py": make_env_script_list_py,
-    }[ext]
+    }.get(ext, make_env_script_list_common)
     return func(instance, specs, env_name)
 
 
@@ -44,8 +45,9 @@ def make_eval_script_list(
     Applies the test patch and runs the tests.
     """
     ext = MAP_REPO_TO_EXT[instance["repo"]]
+    common_func = make_eval_script_list_common
     func = {
         "js": make_eval_script_list_js,
         "py": make_eval_script_list_py,
-    }[ext]
+    }.get(ext, common_func)
     return func(instance, specs, env_name, repo_directory, base_commit, test_patch)

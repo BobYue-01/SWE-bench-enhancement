@@ -3,7 +3,6 @@ from __future__ import annotations
 import docker
 import docker.errors
 import logging
-import re
 import sys
 import traceback
 
@@ -145,9 +144,7 @@ def build_image(
                 buildlog += chunk_stream
             elif "errorDetail" in chunk:
                 # Decode error message, raise BuildError
-                logger.error(
-                    f"Error: {ansi_escape(chunk['errorDetail']['message'])}"
-                )
+                logger.error(f"Error: {ansi_escape(chunk['errorDetail']['message'])}")
                 raise docker.errors.BuildError(
                     chunk["errorDetail"]["message"], buildlog
                 )
@@ -163,7 +160,12 @@ def build_image(
 
 
 def build_base_images(
-    client: docker.DockerClient, dataset: list, force_rebuild: bool = False
+    client: docker.DockerClient,
+    dataset: list,
+    force_rebuild: bool = False,
+    namespace: str = None,
+    instance_image_tag: str = None,
+    env_image_tag: str = None,
 ):
     """
     Builds the base images required for the dataset if they do not already exist.
@@ -174,7 +176,12 @@ def build_base_images(
         force_rebuild (bool): Whether to force rebuild the images even if they already exist
     """
     # Get the base images to build from the dataset
-    test_specs = get_test_specs_from_dataset(dataset)
+    test_specs = get_test_specs_from_dataset(
+        dataset,
+        namespace=namespace,
+        instance_image_tag=instance_image_tag,
+        env_image_tag=env_image_tag,
+    )
     base_images = {
         x.base_image_key: (x.base_dockerfile, x.platform) for x in test_specs
     }
@@ -208,6 +215,9 @@ def build_base_images(
 def get_env_configs_to_build(
     client: docker.DockerClient,
     dataset: list,
+    namespace: str = None,
+    instance_image_tag: str = None,
+    env_image_tag: str = None,
 ):
     """
     Returns a dictionary of image names to build scripts and dockerfiles for environment images.
@@ -219,7 +229,12 @@ def get_env_configs_to_build(
     """
     image_scripts = dict()
     base_images = dict()
-    test_specs = get_test_specs_from_dataset(dataset)
+    test_specs = get_test_specs_from_dataset(
+        dataset,
+        namespace=namespace,
+        instance_image_tag=instance_image_tag,
+        env_image_tag=env_image_tag,
+    )
 
     for test_spec in test_specs:
         # Check if the base image exists
@@ -257,6 +272,9 @@ def build_env_images(
     dataset: list,
     force_rebuild: bool = False,
     max_workers: int = 4,
+    namespace: str = None,
+    instance_image_tag: str = None,
+    env_image_tag: str = None,
 ):
     """
     Builds the environment images required for the dataset if they do not already exist.
@@ -269,11 +287,23 @@ def build_env_images(
     """
     # Get the environment images to build from the dataset
     if force_rebuild:
-        env_image_keys = {x.env_image_key for x in get_test_specs_from_dataset(dataset)}
+        env_image_keys = {
+            x.env_image_key
+            for x in get_test_specs_from_dataset(
+                dataset,
+                namespace=namespace,
+                instance_image_tag=instance_image_tag,
+                env_image_tag=env_image_tag,
+            )
+        }
         for key in env_image_keys:
             remove_image(client, key, "quiet")
-    build_base_images(client, dataset, force_rebuild)
-    configs_to_build = get_env_configs_to_build(client, dataset)
+    build_base_images(
+        client, dataset, force_rebuild, namespace, instance_image_tag, env_image_tag
+    )
+    configs_to_build = get_env_configs_to_build(
+        client, dataset, namespace, instance_image_tag, env_image_tag
+    )
     if len(configs_to_build) == 0:
         print("No environment images need to be built.")
         return [], []
@@ -310,6 +340,7 @@ def build_instance_images(
     max_workers: int = 4,
     namespace: str = None,
     tag: str = None,
+    env_image_tag: str = None,
 ):
     """
     Builds the instance images required for the dataset if they do not already exist.
@@ -323,7 +354,12 @@ def build_instance_images(
     # Build environment images (and base images as needed) first
     test_specs = list(
         map(
-            lambda x: make_test_spec(x, namespace=namespace, instance_image_tag=tag),
+            lambda x: make_test_spec(
+                x,
+                namespace=namespace,
+                instance_image_tag=tag,
+                env_image_tag=env_image_tag,
+            ),
             dataset,
         )
     )

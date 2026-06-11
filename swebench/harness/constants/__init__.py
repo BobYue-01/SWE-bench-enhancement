@@ -1,8 +1,15 @@
 from enum import Enum
 from pathlib import Path
-from swebench.harness.constants.javascript import *
-from swebench.harness.constants.python import *
 from typing import TypedDict
+
+from swebench.harness.constants.c import *
+from swebench.harness.constants.go import *
+from swebench.harness.constants.java import *
+from swebench.harness.constants.javascript import *
+from swebench.harness.constants.php import *
+from swebench.harness.constants.python import *
+from swebench.harness.constants.ruby import *
+from swebench.harness.constants.rust import *
 
 
 # Constants - Evaluation Log Directories
@@ -127,19 +134,47 @@ FAIL_ONLY_REPOS = {
 
 # Constants - Aggregate Installation Specifiactions
 MAP_REPO_VERSION_TO_SPECS = {
+    **MAP_REPO_VERSION_TO_SPECS_C,
+    **MAP_REPO_VERSION_TO_SPECS_GO,
+    **MAP_REPO_VERSION_TO_SPECS_JAVA,
     **MAP_REPO_VERSION_TO_SPECS_JS,
+    **MAP_REPO_VERSION_TO_SPECS_PHP,
     **MAP_REPO_VERSION_TO_SPECS_PY,
+    **MAP_REPO_VERSION_TO_SPECS_RUBY,
+    **MAP_REPO_VERSION_TO_SPECS_RUST,
 }
 
 MAP_REPO_TO_INSTALL = {
+    **MAP_REPO_TO_INSTALL_C,
+    **MAP_REPO_TO_INSTALL_GO,
+    **MAP_REPO_TO_INSTALL_JAVA,
     **MAP_REPO_TO_INSTALL_JS,
+    **MAP_REPO_TO_INSTALL_PHP,
     **MAP_REPO_TO_INSTALL_PY,
+    **MAP_REPO_TO_INSTALL_RUBY,
+    **MAP_REPO_TO_INSTALL_RUST,
 }
 
 MAP_REPO_TO_EXT = {
+    **{k: "c" for k in MAP_REPO_VERSION_TO_SPECS_C.keys()},
+    **{k: "go" for k in MAP_REPO_VERSION_TO_SPECS_GO.keys()},
+    **{k: "java" for k in MAP_REPO_VERSION_TO_SPECS_JAVA.keys()},
     **{k: "js" for k in MAP_REPO_VERSION_TO_SPECS_JS.keys()},
+    **{k: "php" for k in MAP_REPO_VERSION_TO_SPECS_PHP.keys()},
     **{k: "py" for k in MAP_REPO_VERSION_TO_SPECS_PY.keys()},
+    **{k: "rb" for k in MAP_REPO_VERSION_TO_SPECS_RUBY.keys()},
+    **{k: "rs" for k in MAP_REPO_VERSION_TO_SPECS_RUST.keys()},
 }
 
 LATEST = "latest"
 USE_X86 = USE_X86_PY
+
+REPO_BASE_COMMIT_BRANCH = {
+    "sympy/sympy": {
+        "cffd4e0f86fefd4802349a9f9b19ed70934ea354": "1.7",
+        "70381f282f2d9d039da860e391fe51649df2779d": "sympy-1.5.1",
+    },
+    "pytest-dev/pytest": {
+        "8aba863a634f40560e25055d179220f0eefabe9a": "4.6.x",
+    },
+}

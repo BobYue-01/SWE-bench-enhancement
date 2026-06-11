@@ -13,13 +13,19 @@ from swebench.harness.constants import (
     SWE_BENCH_URL_RAW,
     START_TEST_OUTPUT,
     END_TEST_OUTPUT,
+    REPO_BASE_COMMIT_BRANCH,
 )
-from swebench.harness.utils import get_modified_files
+from swebench.harness.utils import get_modified_files, get_new_files, load_cached_environment_yml
 from functools import cache
 
 HEADERS = {
     "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_11_5) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/50.0.2661.102 Safari/537.36"
 }
+
+REPLACE_REQ_PACKAGES = [
+    # pkg-to-replace, replacement
+    ("types-pkg_resources", "types-setuptools")
+]
 
 
 @cache
@@ -46,6 +52,67 @@ def get_environment_yml_by_commit(repo: str, commit: str, env_name: str) -> str:
     return "\n".join(cleaned)
 
 
+def clean_environment_yml(yml_text: str) -> str:
+    """
+    Clean environment.yml by removing packages that have been yanked from PyPI
+
+    conda style yamls take the form:
+    ...
+    - channels:
+        ...
+    - dependencies:
+        ...
+    - pip:
+        - pkg_to_replace
+        - pkg_to_replace
+    - ... (more dependencies)
+
+    We want to replace packages in the pip section only.
+    """
+    pip_match = re.search(r"^(\s*-\s*pip\s*:\s*\n)", yml_text, flags=re.MULTILINE)
+    if not pip_match:
+        return yml_text
+    pip_line_start = pip_match.start()
+    # get indentation level of pip line
+    pip_indent = len(pip_match.group(1)) - len(pip_match.group(1).lstrip())
+    pip_content_start = pip_match.end()
+    # find where pip section ends by looking for a line that's at same or less indentation
+    # or a line that starts a new top-level dependency (not pip)
+    lines_after_pip = yml_text[pip_content_start:].split("\n")
+    pip_section_end = pip_content_start
+    for ix, line in enumerate(lines_after_pip):
+        if line.strip() == "":
+            continue
+        line_indent = len(line) - len(line.lstrip())
+        if line_indent <= pip_indent:
+            # +1 to account for the newline
+            pip_section_end = pip_content_start + sum(
+                len(l) + 1 for l in lines_after_pip[:ix]
+            )
+            break
+    else:
+        pip_section_end = len(yml_text)
+    prefix = yml_text[:pip_content_start]
+    pip_portion = yml_text[pip_content_start:pip_section_end]
+    suffix = yml_text[pip_section_end:]
+    for pkg_to_replace, replacement in REPLACE_REQ_PACKAGES:
+        if replacement == None:
+            pip_portion = re.sub(
+                rf"^(\s*-\s*){re.escape(pkg_to_replace)}([<>~]=?.*|$)\n?",
+                "",
+                pip_portion,
+                flags=re.MULTILINE,
+            )
+        else:
+            pip_portion = re.sub(
+                rf"^(\s*-\s*){re.escape(pkg_to_replace)}([<>=!~]=?.*|$)",
+                rf"\1{replacement}",
+                pip_portion,
+                flags=re.MULTILINE,
+            )
+    return prefix + pip_portion + suffix
+
+
 def get_environment_yml(instance: SWEbenchInstance, env_name: str) -> str:
     """
     Get environment.yml for given task instance
@@ -62,8 +129,9 @@ def get_environment_yml(instance: SWEbenchInstance, env_name: str) -> str:
         if "environment_setup_commit" in instance
         else instance["base_commit"]
     )
-
-    return get_environment_yml_by_commit(instance["repo"], commit, env_name)
+    yml_text = get_environment_yml_by_commit(instance["repo"], commit, env_name)
+    yml_text = clean_environment_yml(yml_text)
+    return yml_text
 
 
 @cache
@@ -113,6 +181,31 @@ def get_requirements_by_commit(repo: str, commit: str) -> str:
     return all_reqs
 
 
+def clean_requirements(requirements_text: str) -> str:
+    """
+    Clean requirements.txt by replacing / removing packages
+
+    E.g. types-pkg_resources has been yanked from PyPI, so we replace it with types-setuptools
+    """
+    for pkg_to_replace, replacement in REPLACE_REQ_PACKAGES:
+        if replacement == None:
+            requirements_text = re.sub(
+                rf"^{re.escape(pkg_to_replace)}([<>=!~]=?.*|$)\n?",
+                "",
+                requirements_text,
+                flags=re.MULTILINE,
+            )
+        else:
+            # this replacement removes version specifier of the original package
+            requirements_text = re.sub(
+                rf"^{re.escape(pkg_to_replace)}([<>=!~]=?.*|$)",
+                replacement,
+                requirements_text,
+                flags=re.MULTILINE,
+            )
+    return requirements_text
+
+
 def get_requirements(instance: SWEbenchInstance) -> str:
     """
     Get requirements.txt for given task instance
@@ -129,7 +222,9 @@ def get_requirements(instance: SWEbenchInstance) -> str:
         else instance["base_commit"]
     )
 
-    return get_requirements_by_commit(instance["repo"], commit)
+    requirements_text = get_requirements_by_commit(instance["repo"], commit)
+    requirements_text = clean_requirements(requirements_text)
+    return requirements_text
 
 
 def get_test_directives(instance: SWEbenchInstance) -> list:
@@ -173,13 +268,24 @@ def make_repo_script_list_py(
     Create a list of bash commands to set up the repository for testing.
     This is the setup script for the instance image.
     """
+    branch = REPO_BASE_COMMIT_BRANCH.get(repo, {}).get(base_commit, "")
+    branch = f"--branch {branch}" if branch else ""
     setup_commands = [
-        f"git clone -o origin https://github.com/{repo} {repo_directory}",
+        f"git clone -o origin {branch} --single-branch https://github.com/{repo} {repo_directory}",
         f"chmod -R 777 {repo_directory}",  # So nonroot user can run tests
         f"cd {repo_directory}",
         f"git reset --hard {base_commit}",
-        # Remove the remote so the agent won't see newer commits.
+        # Remove the remote and tags so the agent won't see newer commits.
         "git remote remove origin",
+        # Remove only tags pointing to commits after target timestamp
+        f"TARGET_TIMESTAMP=$(git show -s --format=%ci {base_commit})",
+        'git tag -l | while read tag; do TAG_COMMIT=$(git rev-list -n 1 "$tag"); TAG_TIME=$(git show -s --format=%ci "$TAG_COMMIT"); if [[ "$TAG_TIME" > "$TARGET_TIMESTAMP" ]]; then git tag -d "$tag"; fi; done',
+        "git reflog expire --expire=now --all",
+        "git gc --prune=now --aggressive",
+        # Verify future logs aren't available
+        "AFTER_TIMESTAMP=$(date -d \"$TARGET_TIMESTAMP + 1 second\" '+%Y-%m-%d %H:%M:%S')",
+        'COMMIT_COUNT=$(git log --oneline --all --since="$AFTER_TIMESTAMP" | wc -l)',
+        '[ "$COMMIT_COUNT" -eq 0 ] || exit 1',
         # Make sure conda is available for later use
         "source /opt/miniconda3/bin/activate",
         f"conda activate {env_name}",
@@ -196,7 +302,7 @@ def make_repo_script_list_py(
     if "install" in specs:
         setup_commands.append(specs["install"])
 
-    # If the setup modifies the repository in any way, it can be 
+    # If the setup modifies the repository in any way, it can be
     # difficult to get a clean diff.  This ensures that `git diff`
     # will only reflect the changes from the user while retaining the
     # original state of the repository plus setup commands.
@@ -211,11 +317,29 @@ def make_repo_script_list_py(
     return setup_commands
 
 
+def make_env_script_list_py_from_conda(
+    instance, specs, env_name, cached_environment_yml
+) -> list:
+    HEREDOC_DELIMITER = "EOF_59812759871"
+    reqs_commands = [
+        "source /opt/miniconda3/bin/activate",
+        f"cat <<'{HEREDOC_DELIMITER}' > /root/environment.yml\n{cached_environment_yml}\n{HEREDOC_DELIMITER}",
+        "conda env create -f /root/environment.yml",
+        f"conda activate {env_name}",
+    ]
+    return reqs_commands
+
+
 def make_env_script_list_py(instance, specs, env_name) -> list:
     """
     Creates the list of commands to set up the conda environment for testing.
     This is the setup script for the environment image.
     """
+    cached_environment_yml = load_cached_environment_yml(instance["instance_id"])
+    if cached_environment_yml:
+        return make_env_script_list_py_from_conda(
+            instance, specs, env_name, cached_environment_yml
+        )
     HEREDOC_DELIMITER = "EOF_59812759871"
     reqs_commands = [
         "source /opt/miniconda3/bin/activate",
@@ -285,9 +409,18 @@ def make_eval_script_list_py(
     Applies the test patch and runs the tests.
     """
     HEREDOC_DELIMITER = "EOF_114329324912"
-    test_files = get_modified_files(test_patch)
-    # Reset test files to the state they should be in before the patch.
-    reset_tests_command = f"git checkout {base_commit} {' '.join(test_files)}"
+    # Separate modified files (exist at base commit) from new files.
+    # get_modified_files() only returns files with a real source (not /dev/null),
+    # i.e. modified files. New files need `rm -f` instead of `git checkout`.
+    # Without this, `git checkout {base_commit}` with no file args resets the
+    # entire working tree, undoing image setup changes. (#518)
+    modified_files = get_modified_files(test_patch)
+    new_files = get_new_files(test_patch)
+    reset_commands = []
+    if modified_files:
+        reset_commands.append(f"git checkout {base_commit} {' '.join(modified_files)}")
+    if new_files:
+        reset_commands.append(f"rm -f {' '.join(new_files)}")
     apply_test_patch_command = (
         f"git apply -v - <<'{HEREDOC_DELIMITER}'\n{test_patch}\n{HEREDOC_DELIMITER}"
     )
@@ -318,12 +451,12 @@ def make_eval_script_list_py(
     ]
     if "install" in specs:
         eval_commands.append(specs["install"])
+    eval_commands += reset_commands
     eval_commands += [
-        reset_tests_command,
         apply_test_patch_command,
         f": '{START_TEST_OUTPUT}'",
         test_command,
         f": '{END_TEST_OUTPUT}'",
-        reset_tests_command,  # Revert tests after done, leave the repo in the same state as before
     ]
+    eval_commands += reset_commands  # Revert tests after done
     return eval_commands

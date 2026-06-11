@@ -1,9 +1,8 @@
 import hashlib
 import json
-import platform
 
 from dataclasses import dataclass
-from typing import Any, Union, cast
+from typing import Any, Optional, Union, cast
 
 from swebench.harness.constants import (
     DEFAULT_DOCKER_SPECS,
@@ -11,7 +10,6 @@ from swebench.harness.constants import (
     LATEST,
     MAP_REPO_TO_EXT,
     MAP_REPO_VERSION_TO_SPECS,
-    USE_X86,
     SWEbenchInstance,
 )
 from swebench.harness.dockerfiles import (
@@ -43,7 +41,7 @@ class TestSpec:
     PASS_TO_PASS: list[str]
     language: str
     docker_specs: dict
-    namespace: str
+    namespace: Optional[str]
     base_image_tag: str = LATEST
     env_image_tag: str = LATEST
     instance_image_tag: str = LATEST
@@ -72,6 +70,18 @@ class TestSpec:
 
     @property
     def base_image_key(self):
+        """
+        If docker_specs are present, the base image key includes a hash of the specs.
+        """
+        if self.docker_specs != {}:
+            hash_key = str(self.docker_specs)
+            hash_object = hashlib.sha256()
+            hash_object.update(hash_key.encode("utf-8"))
+            hash_value = hash_object.hexdigest()
+            val = hash_value[
+                :10
+            ]  # 10 characters is still likely to be unique given only a few base images will be created
+            return f"sweb.base.{MAP_REPO_TO_EXT[self.repo]}.{self.arch}.{val}:{self.base_image_tag}"
         return (
             f"sweb.base.{MAP_REPO_TO_EXT[self.repo]}.{self.arch}:{self.base_image_tag}"
         )
@@ -144,8 +154,9 @@ class TestSpec:
 
 def get_test_specs_from_dataset(
     dataset: Union[list[SWEbenchInstance], list[TestSpec]],
-    namespace: str = None,
+    namespace: Optional[str] = None,
     instance_image_tag: str = LATEST,
+    env_image_tag: str = LATEST,
 ) -> list[TestSpec]:
     """
     Idempotent function that converts a list of SWEbenchInstance objects to a list of TestSpec objects.
@@ -154,7 +165,7 @@ def get_test_specs_from_dataset(
         return cast(list[TestSpec], dataset)
     return list(
         map(
-            lambda x: make_test_spec(x, namespace, instance_image_tag),
+            lambda x: make_test_spec(x, namespace, instance_image_tag, env_image_tag),
             cast(list[SWEbenchInstance], dataset),
         )
     )
@@ -162,10 +173,11 @@ def get_test_specs_from_dataset(
 
 def make_test_spec(
     instance: SWEbenchInstance,
-    namespace: str = None,
+    namespace: Optional[str] = None,
     base_image_tag: str = LATEST,
     env_image_tag: str = LATEST,
     instance_image_tag: str = LATEST,
+    arch: str = "x86_64",
 ) -> TestSpec:
     if isinstance(instance, TestSpec):
         return instance
@@ -204,12 +216,6 @@ def make_test_spec(
     eval_script_list = make_eval_script_list(
         instance, specs, env_name, repo_directory, base_commit, test_patch
     )
-    if platform.machine() in {"aarch64", "arm64"}:
-        # use arm64 unless explicitly specified
-        arch = "arm64" if instance_id not in USE_X86 else "x86_64"
-    else:
-        arch = "x86_64"
-
     return TestSpec(
         instance_id=instance_id,
         repo=repo,

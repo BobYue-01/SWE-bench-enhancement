@@ -7,7 +7,7 @@ from swebench.harness.constants import KEY_INSTANCE_ID
 from swebench.harness.docker_build import build_instance_images
 from swebench.harness.docker_utils import list_images
 from swebench.harness.test_spec.test_spec import make_test_spec
-from swebench.harness.utils import load_swebench_dataset, str2bool
+from swebench.harness.utils import load_swebench_dataset, str2bool, optional_str
 
 
 def filter_dataset_to_build(
@@ -17,6 +17,7 @@ def filter_dataset_to_build(
     force_rebuild: bool,
     namespace: str = None,
     tag: str = None,
+    env_image_tag: str = None,
 ):
     """
     Filter the dataset to only include instances that need to be built.
@@ -47,7 +48,12 @@ def filter_dataset_to_build(
             continue
 
         # Check if the instance needs to be built (based on force_rebuild flag and existing images)
-        spec = make_test_spec(instance, namespace=namespace, instance_image_tag=tag)
+        spec = make_test_spec(
+            instance,
+            namespace=namespace,
+            instance_image_tag=tag,
+            env_image_tag=env_image_tag,
+        )
         if force_rebuild:
             data_to_build.append(instance)
         elif spec.instance_image_key not in existing_images:
@@ -65,6 +71,7 @@ def main(
     open_file_limit,
     namespace,
     tag,
+    env_image_tag,
 ):
     """
     Build Docker images for the specified instances.
@@ -82,8 +89,12 @@ def main(
     # Filter out instances that were not specified
     dataset = load_swebench_dataset(dataset_name, split)
     dataset = filter_dataset_to_build(
-        dataset, instance_ids, client, force_rebuild, namespace, tag
+        dataset, instance_ids, client, force_rebuild, namespace, tag, env_image_tag
     )
+
+    if len(dataset) == 0:
+        print("All images exist. Nothing left to build.")
+        return 0
 
     # Build images for remaining instances
     successful, failed = build_instance_images(
@@ -93,6 +104,7 @@ def main(
         max_workers=max_workers,
         namespace=namespace,
         tag=tag,
+        env_image_tag=env_image_tag,
     )
     print(f"Successfully built {len(successful)} images")
     print(f"Failed to build {len(failed)} images")
@@ -103,7 +115,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--dataset_name",
         type=str,
-        default="princeton-nlp/SWE-bench_Lite",
+        default="SWE-bench/SWE-bench_Lite",
         help="Name of the dataset to use",
     )
     parser.add_argument("--split", type=str, default="test", help="Split to use")
@@ -123,10 +135,16 @@ if __name__ == "__main__":
         "--open_file_limit", type=int, default=8192, help="Open file limit"
     )
     parser.add_argument(
-        "--namespace", type=str, default=None, help="Namespace to use for the images"
+        "--namespace",
+        type=optional_str,
+        default=None,
+        help="Namespace to use for the images (default: None)",
     )
     parser.add_argument(
         "--tag", type=str, default=None, help="Tag to use for the images"
+    )
+    parser.add_argument(
+        "--env_image_tag", type=str, default=None, help="Environment image tag to use"
     )
     args = parser.parse_args()
     main(**vars(args))

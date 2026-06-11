@@ -2,13 +2,14 @@ import json
 import re
 import requests
 import traceback
+from importlib import resources
+import swebench.resources
 
 from argparse import ArgumentTypeError
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datasets import Dataset, load_dataset, load_from_disk
 from dotenv import load_dotenv
 from pathlib import Path
-from tqdm import tqdm
 from typing import cast
 from swebench.harness.constants import (
     SWEbenchInstance,
@@ -39,7 +40,7 @@ class EvaluationError(Exception):
 
 def get_predictions_from_file(predictions_path: str, dataset_name: str, split: str):
     if predictions_path == "gold":
-        print("Using gold predictions - ignoring predictions_path")
+        print("Using gold predictions")
         dataset = load_swebench_dataset(dataset_name, split)
         return [
             {
@@ -77,52 +78,60 @@ def get_predictions_from_file(predictions_path: str, dataset_name: str, split: s
 
 
 def run_threadpool(func, payloads, max_workers):
+    """
+    Run a function with a list of payloads using ThreadPoolExecutor.
+
+    Args:
+        func: Function to run for each payload
+        payloads: List of payloads to process
+        max_workers: Maximum number of worker threads
+
+    Returns:
+        tuple: (succeeded, failed) lists of payloads
+    """
     if max_workers <= 0:
         return run_sequential(func, payloads)
     succeeded, failed = [], []
-    with tqdm(total=len(payloads), smoothing=0) as pbar:
-        with ThreadPoolExecutor(max_workers=max_workers) as executor:
-            # Create a future for running each instance
-            futures = {executor.submit(func, *payload): payload for payload in payloads}
-            # Wait for each future to complete
-            for future in as_completed(futures):
-                try:
-                    # Update progress bar, check if instance ran successfully
-                    future.result()
-                    succeeded.append(futures[future])
-                except Exception as e:
-                    print(f"{type(e)}: {e}")
-                    traceback.print_exc()
-                    failed.append(futures[future])
-                    continue
-                pbar.update(1)
-                pbar.set_description(
-                    f"{len(succeeded)} ran successfully, {len(failed)} failed"
-                )
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        # Create a future for running each instance
+        futures = {executor.submit(func, *payload): payload for payload in payloads}
+        # Wait for each future to complete
+        for future in as_completed(futures):
+            try:
+                # Check if instance ran successfully
+                future.result()
+                succeeded.append(futures[future])
+            except Exception as e:
+                print(f"{type(e)}: {e}")
+                traceback.print_exc()
+                failed.append(futures[future])
     return succeeded, failed
 
 
-def run_sequential(func, args_list):
+def run_sequential(func, payloads):
     """
-    Run a function with a list of arguments sequentially
+    Run a function with a list of payloads sequentially.
+
+    Args:
+        func: Function to run for each payload
+        payloads: List of payloads to process
+
+    Returns:
+        tuple: (succeeded, failed) lists of payloads
     """
     succeeded, failed = [], []
-    pbar = tqdm(total=len(args_list), smoothing=0)
-    for args in args_list:
+    for payload in payloads:
         try:
-            func(*args)
-            succeeded.append(args)
+            func(*payload)
+            succeeded.append(payload)
         except Exception:
             traceback.print_exc()
-            failed.append(args)
-        pbar.update(1)
-        pbar.set_description(f"{len(succeeded)} ran successfully, {len(failed)} failed")
-    pbar.close()
+            failed.append(payload)
     return succeeded, failed
 
 
 def load_swebench_dataset(
-    name="princeton-nlp/SWE-bench", split="test", instance_ids=None
+    name="SWE-bench/SWE-bench", split="test", instance_ids=None
 ) -> list[SWEbenchInstance]:
     """
     Load SWE-bench dataset from Hugging Face Datasets or local .json/.jsonl file
@@ -131,13 +140,16 @@ def load_swebench_dataset(
     if instance_ids:
         instance_ids = set(instance_ids)
     # Load from local .json/.jsonl file
-    if name.endswith(".json") or name.endswith(".jsonl"):
+    if name.endswith(".json"):
         dataset = json.loads(Path(name).read_text())
-        dataset_ids = {instance[KEY_INSTANCE_ID] for instance in dataset}
+    elif name.endswith(".jsonl"):
+        dataset = [json.loads(line) for line in Path(name).read_text().splitlines()]
+    elif name.endswith(".parquet"):
+        dataset = cast(Dataset, load_dataset("parquet", data_files=name, split="train"))
     else:
         # Load from Hugging Face Datasets
         if name.lower() in {"swe-bench", "swebench", "swe_bench"}:
-            name = "princeton-nlp/SWE-bench"
+            name = "SWE-bench/SWE-bench"
         elif name.lower() in {
             "swe-bench-lite",
             "swebench-lite",
@@ -145,12 +157,15 @@ def load_swebench_dataset(
             "swe-bench_lite",
             "lite",
         }:
-            name = "princeton-nlp/SWE-bench_Lite"
-        if (Path(name) / split / "dataset_info.json").exists():
+            name = "SWE-bench/SWE-bench_Lite"
+        parquet_path = Path(name) / f"{split}.parquet"
+        if parquet_path.exists():
+            dataset = cast(Dataset, load_dataset("parquet", data_files=str(parquet_path), split="train"))
+        elif (Path(name) / split / "dataset_info.json").exists():
             dataset = cast(Dataset, load_from_disk(Path(name) / split))
         else:
             dataset = cast(Dataset, load_dataset(name, split=split))
-        dataset_ids = {instance[KEY_INSTANCE_ID] for instance in dataset}
+    dataset_ids = {instance[KEY_INSTANCE_ID] for instance in dataset}
     if instance_ids:
         if instance_ids - dataset_ids:
             raise ValueError(
@@ -301,6 +316,15 @@ def str2bool(v):
         raise ArgumentTypeError("Boolean value expected.")
 
 
+def optional_str(value: str) -> str | None:
+    """
+    Convert special string values to None, otherwise return the string as-is.
+    """
+    if value.lower() in ("none", "null", ""):
+        return None
+    return value
+
+
 def get_repo_file(repo, commit, filepath):
     url = f"https://raw.githubusercontent.com/{repo}/{commit}/{filepath}"
     try:
@@ -314,7 +338,7 @@ def get_repo_file(repo, commit, filepath):
 
 def get_modified_files(patch: str) -> list[str]:
     """
-    Get the list of modified files in a patch
+    Get the list of modified files in a patch (excludes new files).
     """
     source_files = []
     for file in PatchSet(patch):
@@ -324,8 +348,40 @@ def get_modified_files(patch: str) -> list[str]:
     return source_files
 
 
+def get_new_files(patch: str) -> list[str]:
+    """
+    Get the list of new files in a patch (source is /dev/null).
+    """
+    new_files = []
+    for file in PatchSet(patch):
+        if file.source_file == "/dev/null":
+            target = file.target_file
+            if target.startswith("b/"):
+                target = target[2:]
+            new_files.append(target)
+    return new_files
+
+
 def ansi_escape(text: str) -> str:
     """
     Remove ANSI escape sequences from text
     """
     return re.compile(r"\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])").sub("", text)
+
+
+def load_cached_environment_yml(instance_id: str) -> str:
+    """
+    Load environment.yml from cache
+    """
+    try:
+        repo, number = instance_id.rsplit("-", 1)
+    except ValueError:
+        return None
+    try:
+        return (
+            resources.files(swebench.resources)
+            .joinpath(f"swebench-og/{repo}/{number}/environment.yml")
+            .read_text()
+        )
+    except FileNotFoundError:
+        return None

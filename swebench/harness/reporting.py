@@ -19,6 +19,9 @@ def make_run_report(
     full_dataset: list,
     run_id: str,
     client: Optional[docker.DockerClient] = None,
+    namespace: str = None,
+    instance_image_tag: str = "latest",
+    env_image_tag: str = "latest",
 ) -> Path:
     """
     Make a final evaluation and run report of the instances that have been run.
@@ -63,14 +66,22 @@ def make_run_report(
             / LOG_REPORT
         )
         if report_file.exists():
-            # If report file exists, then the instance has been run
             completed_ids.add(instance_id)
-            report = json.loads(report_file.read_text())
-            if report[instance_id]["resolved"]:
-                # Record if the instance was resolved
-                resolved_ids.add(instance_id)
-            else:
-                unresolved_ids.add(instance_id)
+            try:
+                content = report_file.read_text().strip()
+                if not content:  # Empty file
+                    error_ids.add(instance_id)
+                    continue
+
+                report = json.loads(content)
+                if report[instance_id]["resolved"]:
+                    # Record if the instance was resolved
+                    resolved_ids.add(instance_id)
+                else:
+                    unresolved_ids.add(instance_id)
+            except (json.JSONDecodeError, KeyError):
+                # If the report file is not valid JSON or missing keys, treat as error
+                error_ids.add(instance_id)
         else:
             # Otherwise, the instance was not run successfully
             error_ids.add(instance_id)
@@ -78,7 +89,17 @@ def make_run_report(
     if client:
         # get remaining images and containers
         images = list_images(client)
-        test_specs = list(map(make_test_spec, full_dataset))
+        test_specs = list(
+            map(
+                lambda x: make_test_spec(
+                    x,
+                    namespace=namespace,
+                    instance_image_tag=instance_image_tag,
+                    env_image_tag=env_image_tag,
+                ),
+                full_dataset,
+            )
+        )
         for spec in test_specs:
             image_name = spec.instance_image_key
             if image_name in images:

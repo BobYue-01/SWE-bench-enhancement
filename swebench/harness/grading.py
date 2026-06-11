@@ -29,7 +29,10 @@ def test_passed(case: str, sm: dict[str, str]) -> bool:
 
 
 def test_failed(case: str, sm: dict[str, str]) -> bool:
-    return case not in sm or sm[case] in [TestStatus.FAILED.value, TestStatus.ERROR.value]
+    return case not in sm or sm[case] in [
+        TestStatus.FAILED.value,
+        TestStatus.ERROR.value,
+    ]
 
 
 # MARK: Evaluation report functions
@@ -73,8 +76,19 @@ def get_logs_eval(test_spec: TestSpec, log_fp: str) -> tuple[dict[str, str], boo
             return {}, False
 
         # Get status map of evaluation results
-        content = content.split(START_TEST_OUTPUT)[1].split(END_TEST_OUTPUT)[0]
-        return log_parser(content, test_spec), True
+        test_content = content.split(START_TEST_OUTPUT)[1].split(END_TEST_OUTPUT)[0]
+
+        # Try parsing the content between markers first
+        status_map = log_parser(test_content, test_spec)
+
+        # If no test results found between markers (common in Modal environment),
+        # try parsing the entire log content as fallback
+        if not status_map:
+            # Look for pytest output patterns in the entire log content
+            # This handles cases where pytest output goes to stderr and isn't captured between markers
+            status_map = log_parser(content, test_spec)
+
+        return status_map, True
 
 
 def get_eval_tests_report(
@@ -265,12 +279,13 @@ def get_eval_report(
         PASS_TO_PASS: test_spec.PASS_TO_PASS,
     }
 
-    eval_type = EvalType.FAIL_ONLY if test_spec.repo in FAIL_ONLY_REPOS \
+    eval_type = (
+        EvalType.FAIL_ONLY
+        if test_spec.repo in FAIL_ONLY_REPOS
         else EvalType.PASS_AND_FAIL
-
-    report = get_eval_tests_report(
-        eval_status_map, eval_ref, eval_type=eval_type
     )
+
+    report = get_eval_tests_report(eval_status_map, eval_ref, eval_type=eval_type)
     if get_resolution_status(report) == ResolvedStatus.FULL.value:
         report_map[instance_id]["resolved"] = True
 
