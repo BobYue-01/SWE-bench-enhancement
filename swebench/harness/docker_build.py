@@ -132,6 +132,11 @@ def build_image(
             decode=True,
             platform=platform,
             nocache=nocache,
+            network_mode="host",
+            buildargs={
+                "http_proxy": "http://127.0.0.1:9999",
+                "https_proxy": "http://127.0.0.1:9999",
+            },
         )
 
         # Log the build process continuously

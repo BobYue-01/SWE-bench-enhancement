@@ -210,9 +210,11 @@ def make_test_spec(
     docker_specs = specs.get("docker_specs", {})
 
     repo_script_list = make_repo_script_list(
-        specs, repo, repo_directory, base_commit, env_name
+        specs, repo, base_commit, env_name
     )
-    env_script_list = make_env_script_list(instance, specs, env_name)
+    env_script_list = make_env_script_list(
+        instance, specs, env_name, repo, repo_directory, base_commit
+    )
     eval_script_list = make_eval_script_list(
         instance, specs, env_name, repo_directory, base_commit, test_patch
     )

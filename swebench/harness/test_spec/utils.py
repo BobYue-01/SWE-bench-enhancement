@@ -20,16 +20,13 @@ def get_test_cmds(instance) -> list:
 
 
 def make_repo_script_list_common(
-    specs, repo, repo_directory, base_commit, env_name
+    specs, repo, base_commit, env_name
 ) -> list:
     """
     Create a list of bash commands to set up the repository for testing.
     This is the setup script for the instance image.
     """
     setup_commands = [
-        f"git clone -o origin https://github.com/{repo} {repo_directory}",
-        f"chmod -R 777 {repo_directory}",  # So nonroot user can run tests
-        f"cd {repo_directory}",
         f"git reset --hard {base_commit}",
         "git remote remove origin",  # Remove the remote so the agent won't see newer commits
     ]
@@ -42,7 +39,7 @@ def make_repo_script_list_common(
     return setup_commands
 
 
-def make_env_script_list_common(instance, specs, env_name) -> list:
+def make_env_script_list_common(instance, specs, env_name, repo, repo_directory, base_commit) -> list:
     """
     Creates the list of commands to set up the environment for testing.
     This is the setup script for the environment image.
@@ -53,6 +50,12 @@ def make_env_script_list_common(instance, specs, env_name) -> list:
             "apt-get update",
             f"apt-get install -y {' '.join(specs['apt-pkgs'])}",
         ]
+
+    reqs_commands.extend([
+        f"git clone -o origin https://github.com/{repo} {repo_directory}",
+        f"chmod -R 777 {repo_directory}",  # So nonroot user can run tests
+        f"cd {repo_directory}",
+    ])
     return reqs_commands
 
 

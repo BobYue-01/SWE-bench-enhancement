@@ -262,18 +262,13 @@ def get_test_directives(instance: SWEbenchInstance) -> list:
 
 
 def make_repo_script_list_py(
-    specs, repo, repo_directory, base_commit, env_name
+    specs, repo, base_commit, env_name
 ) -> list:
     """
     Create a list of bash commands to set up the repository for testing.
     This is the setup script for the instance image.
     """
-    branch = REPO_BASE_COMMIT_BRANCH.get(repo, {}).get(base_commit, "")
-    branch = f"--branch {branch}" if branch else ""
     setup_commands = [
-        f"git clone -o origin {branch} --single-branch https://github.com/{repo} {repo_directory}",
-        f"chmod -R 777 {repo_directory}",  # So nonroot user can run tests
-        f"cd {repo_directory}",
         f"git reset --hard {base_commit}",
         # Remove the remote and tags so the agent won't see newer commits.
         "git remote remove origin",
@@ -318,19 +313,24 @@ def make_repo_script_list_py(
 
 
 def make_env_script_list_py_from_conda(
-    instance, specs, env_name, cached_environment_yml
+    instance, specs, env_name, cached_environment_yml, repo, repo_directory, base_commit
 ) -> list:
     HEREDOC_DELIMITER = "EOF_59812759871"
+    branch = REPO_BASE_COMMIT_BRANCH.get(repo, {}).get(base_commit, "")
+    branch = f"--branch {branch}" if branch else ""
     reqs_commands = [
         "source /opt/miniconda3/bin/activate",
         f"cat <<'{HEREDOC_DELIMITER}' > /root/environment.yml\n{cached_environment_yml}\n{HEREDOC_DELIMITER}",
         "conda env create -f /root/environment.yml",
         f"conda activate {env_name}",
+        f"git clone -o origin {branch} --single-branch https://github.com/{repo} {repo_directory}",
+        f"chmod -R 777 {repo_directory}",  # So nonroot user can run tests
+        f"cd {repo_directory}",
     ]
     return reqs_commands
 
 
-def make_env_script_list_py(instance, specs, env_name) -> list:
+def make_env_script_list_py(instance, specs, env_name, repo, repo_directory, base_commit) -> list:
     """
     Creates the list of commands to set up the conda environment for testing.
     This is the setup script for the environment image.
@@ -338,7 +338,7 @@ def make_env_script_list_py(instance, specs, env_name) -> list:
     cached_environment_yml = load_cached_environment_yml(instance["instance_id"])
     if cached_environment_yml:
         return make_env_script_list_py_from_conda(
-            instance, specs, env_name, cached_environment_yml
+            instance, specs, env_name, cached_environment_yml, repo, repo_directory, base_commit
         )
     HEREDOC_DELIMITER = "EOF_59812759871"
     reqs_commands = [
@@ -399,6 +399,14 @@ def make_env_script_list_py(instance, specs, env_name) -> list:
         pip_packages = " ".join(specs["pip_packages"])
         cmd = f"python -m pip install {pip_packages}"
         reqs_commands.append(cmd)
+
+    branch = REPO_BASE_COMMIT_BRANCH.get(repo, {}).get(base_commit, "")
+    branch = f"--branch {branch}" if branch else ""
+    reqs_commands.extend([
+        f"git clone -o origin {branch} --single-branch https://github.com/{repo} {repo_directory}",
+        f"chmod -R 777 {repo_directory}",  # So nonroot user can run tests
+        f"cd {repo_directory}",
+    ])
     return reqs_commands
 
 

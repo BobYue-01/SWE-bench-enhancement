@@ -14,7 +14,7 @@ from swebench.harness.test_spec.utils import (
 )
 
 
-def make_repo_script_list(specs, repo, repo_directory, base_commit, env_name) -> list:
+def make_repo_script_list(specs, repo, base_commit, env_name) -> list:
     """
     Create a list of bash commands to set up the repository for testing.
     This is the setup script for the instance image.
@@ -23,10 +23,10 @@ def make_repo_script_list(specs, repo, repo_directory, base_commit, env_name) ->
     func = {
         "py": make_repo_script_list_py,
     }.get(ext, make_repo_script_list_common)
-    return func(specs, repo, repo_directory, base_commit, env_name)
+    return func(specs, repo, base_commit, env_name)
 
 
-def make_env_script_list(instance, specs, env_name) -> list:
+def make_env_script_list(instance, specs, env_name, repo, repo_directory, base_commit) -> list:
     """
     Creates the list of commands to set up the environment for testing.
     This is the setup script for the environment image.
@@ -35,7 +35,7 @@ def make_env_script_list(instance, specs, env_name) -> list:
     func = {
         "py": make_env_script_list_py,
     }.get(ext, make_env_script_list_common)
-    return func(instance, specs, env_name)
+    return func(instance, specs, env_name, repo, repo_directory, base_commit)
 
 
 def make_eval_script_list(
