@@ -431,6 +431,9 @@ def build_instance_image(
     dockerfile = test_spec.instance_dockerfile
 
     # Check that the env. image the instance image is based on exists
+    logger.info(
+        f"Checking environment image for {test_spec.instance_id}: {env_image_name}"
+    )
     try:
         env_image = client.images.get(env_image_name)
     except docker.errors.ImageNotFound as e:
@@ -446,6 +449,7 @@ def build_instance_image(
 
     # Check if the instance image already exists
     image_exists = False
+    logger.info(f"Checking instance image for {test_spec.instance_id}: {image_name}")
     try:
         client.images.get(image_name)
         image_exists = True
@@ -454,6 +458,7 @@ def build_instance_image(
 
     # Build the instance image
     if not image_exists:
+        logger.info(f"Instance image missing; building {image_name}")
         build_image(
             image_name=image_name,
             setup_scripts={
@@ -465,6 +470,7 @@ def build_instance_image(
             build_dir=build_dir,
             nocache=nocache,
         )
+        logger.info(f"Finished building instance image {image_name}")
     else:
         logger.info(f"Image {image_name} already exists, skipping build.")
 
@@ -493,16 +499,31 @@ def build_container(
         force_rebuild (bool): Whether to force rebuild the image even if it already exists
     """
     # Build corresponding instance image
+    logger.info(
+        "build_container entered: "
+        f"instance={test_spec.instance_id}, "
+        f"image={test_spec.instance_image_key}, "
+        f"container={test_spec.get_instance_container_name(run_id)}, "
+        f"is_remote_image={test_spec.is_remote_image}, "
+        f"nocache={nocache}, force_rebuild={force_rebuild}"
+    )
     if force_rebuild:
+        logger.info(f"force_rebuild=True; removing image {test_spec.instance_image_key}")
         remove_image(client, test_spec.instance_image_key, "quiet")
     if not test_spec.is_remote_image:
+        logger.info(f"Using local instance image path for {test_spec.instance_id}")
         build_instance_image(test_spec, client, logger, nocache)
     else:
+        logger.info(f"Using remote/namespace image path for {test_spec.instance_id}")
         try:
+            logger.info(f"Checking remote image locally: {test_spec.instance_image_key}")
             client.images.get(test_spec.instance_image_key)
+            logger.info(f"Remote image tag already present locally: {test_spec.instance_image_key}")
         except docker.errors.ImageNotFound:
             try:
+                logger.info(f"Remote image tag missing locally; pulling {test_spec.instance_image_key}")
                 client.images.pull(test_spec.instance_image_key)
+                logger.info(f"Finished pulling {test_spec.instance_image_key}")
             except docker.errors.NotFound as e:
                 raise BuildImageError(test_spec.instance_id, str(e), logger) from e
             except Exception as e:

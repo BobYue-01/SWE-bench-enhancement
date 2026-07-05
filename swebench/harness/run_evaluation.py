@@ -142,6 +142,14 @@ def run_instance(
     log_dir.mkdir(parents=True, exist_ok=True)
     log_file = log_dir / LOG_INSTANCE
     logger = setup_logger(instance_id, log_file)
+    logger.info(
+        "run_instance entered: "
+        f"instance={instance_id}, "
+        f"image={test_spec.instance_image_key}, "
+        f"container={test_spec.get_instance_container_name(run_id)}, "
+        f"is_remote_image={test_spec.is_remote_image}, "
+        f"rm_image={rm_image}, force_rebuild={force_rebuild}, timeout={timeout}"
+    )
 
     # Run the instance
     container = None
@@ -149,9 +157,12 @@ def run_instance(
     report = {}
     try:
         # Build + start instance container (instance image should already be built)
+        logger.info(f"Calling build_container for {instance_id}...")
         container = build_container(
             test_spec, client, run_id, logger, rm_image, force_rebuild
         )
+        logger.info(f"build_container returned for {instance_id}: {container.id}")
+        logger.info(f"Starting container for {instance_id}...")
         container.start()
         logger.info(f"Container for {instance_id} started: {container.id}")
 
